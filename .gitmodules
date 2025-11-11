@@ -1,0 +1,3 @@
+[submodule "external/startkit"]
+	path = external/startkit
+	url = https://github.com/eeg2025/startkit.git
