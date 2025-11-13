@@ -15,7 +15,11 @@ def parse_args() -> argparse.Namespace:
         "--submission-py",
         type=str,
         default="submission.py",
-        help="Path to submission.py template (default: ./submission.py).",
+        help=(
+            "Path to an existing submission.py file to include in the zip "
+            "(default: ./submission.py). The file must exist and define the "
+            "Submission class expected by the EEG Challenge evaluation code."
+        ),
     )
     parser.add_argument(
         "--weights-ch1",
@@ -75,8 +79,9 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmpdir_str:
         tmpdir = Path(tmpdir_str)
 
-        # Copy submission.py
-        shutil.copy2(submission_py, tmpdir / "submission.py")
+        # Copy submission.py as-is into the temporary directory
+        submission_target = tmpdir / "submission.py"
+        shutil.copy2(submission_py, submission_target)
 
         # Copy weights for challenge 1 with the required name
         shutil.copy2(weights_ch1_src, tmpdir / "weights_challenge_1.pt")
