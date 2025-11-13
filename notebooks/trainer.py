@@ -14,6 +14,11 @@ from tqdm import tqdm
 
 @dataclass
 class TrainingConfig:
+    """Configuration of core hyperparameters for supervised regression training.
+
+    Includes learning rate, weight decay, number of epochs, early stopping
+    patience and minimum delta, and whether to use a learning rate scheduler.
+    """
     lr: float = 1e-3
     weight_decay: float = 1e-5
     n_epochs: int = 5
@@ -24,6 +29,10 @@ class TrainingConfig:
 
 @dataclass
 class EpochResult:
+    """Stores training and validation loss and RMSE for a single epoch.
+
+    Used for logging and analysis of training progress.
+    """
     epoch: int
     train_loss: float
     train_rmse: float
@@ -32,7 +41,15 @@ class EpochResult:
 
 
 class SupervisedRegressorTrainer:
-    """Simple supervised trainer for regression (RMSE + early stopping)."""
+    """Trainer for supervised regression models with MSE loss and RMSE metric.
+
+    This class supports:
+    - Training a regression model using mean squared error loss.
+    - Computing RMSE as the primary evaluation metric.
+    - Optional cosine annealing learning rate scheduler.
+    - Simple early stopping based on validation RMSE improvements.
+    - Tracking and restoring the best model weights found during training.
+    """
 
     def __init__(
         self,
@@ -40,6 +57,20 @@ class SupervisedRegressorTrainer:
         device: Optional[str] = None,
         config: Optional[TrainingConfig] = None,
     ) -> None:
+        """Initialize the trainer with model, device, and training configuration.
+
+        Args:
+            model: The PyTorch model to train.
+            device: Optional device string ('cuda' or 'cpu'). Defaults to CUDA if available.
+            config: Optional TrainingConfig instance specifying hyperparameters.
+
+        Internally creates:
+            - MSE loss function.
+            - AdamW optimizer with specified learning rate and weight decay.
+            - Optional cosine annealing LR scheduler.
+            - History list to store per-epoch results.
+            - Variables to track best model state and best validation RMSE.
+        """
         self.model = model
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
@@ -72,6 +103,22 @@ class SupervisedRegressorTrainer:
         valid_loader: DataLoader,
         print_batch_stats: bool = True,
     ) -> List[EpochResult]:
+        """Run the full training loop over multiple epochs with validation.
+
+        At each epoch:
+            - Train on the training set.
+            - Evaluate on the validation set.
+            - Apply early stopping based on validation RMSE improvements.
+            - Optionally print batch-level stats.
+
+        Args:
+            train_loader: DataLoader for training data.
+            valid_loader: DataLoader for validation data.
+            print_batch_stats: Whether to display batch-level progress bars.
+
+        Returns:
+            List of EpochResult instances summarizing training and validation metrics.
+        """
         epochs_no_improve = 0
 
         for epoch in range(1, self.config.n_epochs + 1):
@@ -124,9 +171,26 @@ class SupervisedRegressorTrainer:
     def evaluate(
         self, dataloader: DataLoader, print_batch_stats: bool = True
     ) -> Tuple[float, float]:
+        """Run a validation loop over the given dataloader and compute loss and RMSE.
+
+        Args:
+            dataloader: DataLoader for validation or test data.
+            print_batch_stats: Whether to display batch-level progress bars.
+
+        Returns:
+            Tuple of (average loss, RMSE) over the entire dataset.
+        """
         return self._evaluate(dataloader, print_batch_stats=print_batch_stats)
 
     def save_best_weights(self, path: str) -> None:
+        """Save the best model weights found during training to disk.
+
+        Args:
+            path: File path where the model weights will be saved.
+
+        Raises:
+            RuntimeError: If no best state is available (e.g., fit() was not called).
+        """
         if self.best_state is None:
             raise RuntimeError("No best state saved. Call fit() first.")
         torch.save(self.best_state, path)
@@ -139,11 +203,22 @@ class SupervisedRegressorTrainer:
         epoch: int,
         print_batch_stats: bool = True,
     ) -> Tuple[float, float]:
+        """Perform one full training epoch over the provided dataloader.
+
+        Args:
+            dataloader: DataLoader for training data.
+            epoch: Current epoch number (for logging).
+            print_batch_stats: Whether to display batch-level progress bars.
+
+        Returns:
+            Tuple of (average training loss, training RMSE) over the epoch.
+        """
         self.model.train()
         total_loss = 0.0
         sum_sq_err = 0.0
         n_samples = 0
 
+        # Use tqdm for optional batch-level progress reporting
         progress_bar = tqdm(
             enumerate(dataloader),
             total=len(dataloader),
@@ -163,6 +238,7 @@ class SupervisedRegressorTrainer:
 
             total_loss += loss.item()
 
+            # Accumulate RMSE in streaming fashion over all samples in the epoch
             preds_flat = preds.detach().view(-1)
             y_flat = y.detach().view(-1)
             sum_sq_err += torch.sum((preds_flat - y_flat) ** 2).item()
@@ -175,6 +251,7 @@ class SupervisedRegressorTrainer:
                     f"Loss: {loss.item():.6f}, RMSE: {running_rmse:.6f}"
                 )
 
+        # Update learning rate schedule once per epoch if scheduler is enabled
         if self.scheduler is not None:
             self.scheduler.step()
 
@@ -188,6 +265,19 @@ class SupervisedRegressorTrainer:
         dataloader: DataLoader,
         print_batch_stats: bool = True,
     ) -> Tuple[float, float]:
+        """Evaluate the model on the given dataloader without gradient updates.
+
+        Mirrors the training loop but disables gradient computations.
+        Aggregates loss and RMSE over the entire validation set.
+        Optionally logs batch-wise progress with tqdm.
+
+        Args:
+            dataloader: DataLoader for validation or test data.
+            print_batch_stats: Whether to display batch-level progress bars.
+
+        Returns:
+            Tuple of (average loss, RMSE) over the entire dataset.
+        """
         self.model.eval()
 
         total_loss = 0.0
@@ -195,6 +285,7 @@ class SupervisedRegressorTrainer:
         n_batches = len(dataloader)
         n_samples = 0
 
+        # Optional progress bar for validation batch-wise reporting
         iterator = tqdm(
             enumerate(dataloader),
             total=n_batches,
@@ -210,6 +301,7 @@ class SupervisedRegressorTrainer:
             batch_loss = self.loss_fn(preds, y).item()
             total_loss += batch_loss
 
+            # Compute RMSE across the whole validation set by accumulating squared errors
             preds_flat = preds.detach().view(-1)
             y_flat = y.detach().view(-1)
             sum_sq_err += torch.sum((preds_flat - y_flat) ** 2).item()

@@ -22,7 +22,17 @@ from sklearn.utils import check_random_state
 
 
 class EEGCCDDataModule:
-    """Data loading, preprocessing and split for EEG Challenge 1 (CCD RT regression)."""
+    """
+    Data loading, preprocessing, window creation, and subject-wise splitting for EEG Challenge 1.
+
+    This class wraps the entire data preparation pipeline tailored specifically for the EEG Challenge 1 task,
+    which involves contrast change detection (CCD) and reaction time regression. It handles downloading
+    or loading the raw dataset, applying preprocessing and windowing steps to create EEG windows aligned
+    to stimulus events, and performs subject-wise splitting to avoid data leakage.
+
+    The class exposes a simple public API consisting of `setup()` to prepare all data components, and
+    `get_dataloaders()` to retrieve train, validation, and test dataloaders ready for model training and evaluation.
+    """
 
     def __init__(
         self,
@@ -39,6 +49,16 @@ class EEGCCDDataModule:
         shift_after_stim: float = 0.5,
         window_len_s: float = 2.0,
     ) -> None:
+        """
+        Initialize the EEGCCDDataModule with configuration parameters.
+
+        The constructor sets up dataset and release options, windowing parameters, and split/loader configurations.
+        - Dataset/release options: control where data is cached, which release version to use, and whether to use a mini subset.
+        - Windowing parameters: determine EEG sampling frequency, epoch length, temporal shifts, and window lengths for segment extraction.
+        - Split and loader parameters: configure batch size, number of workers, validation and test fractions, and random seed for reproducibility.
+
+        These parameters govern how EEG windows are created and how data splits are performed for training, validation, and testing.
+        """
         # Dataset / windowing config
         if cache_root is None:
             cache_root = Path.home() / "eegdash_cache" / "eeg_challenge_cache"
@@ -72,7 +92,13 @@ class EEGCCDDataModule:
     # ---- Public API -----------------------------------------------------
 
     def setup(self) -> None:
-        """Download/load dataset, create windows, split, and build loaders."""
+        """
+        Prepare the dataset for training and evaluation.
+
+        This is the single entry point to fully prepare the data. It orchestrates loading or downloading the raw dataset,
+        applying preprocessing and windowing steps, performing subject-wise splitting into train/validation/test sets,
+        and constructing PyTorch dataloaders. This method should be called once before starting model training or evaluation.
+        """
         self.cache_root.mkdir(parents=True, exist_ok=True)
         self._load_raw_dataset()
         self._create_windows()
@@ -80,6 +106,12 @@ class EEGCCDDataModule:
         self._create_dataloaders()
 
     def get_dataloaders(self) -> Tuple[DataLoader, DataLoader, DataLoader]:
+        """
+        Return the prepared dataloaders for training, validation, and testing.
+
+        The returned tuple contains DataLoader objects in the order: train_loader, valid_loader, test_loader.
+        Raises a RuntimeError if called before `setup()` has been executed to ensure data is ready.
+        """
         if self.train_loader is None or self.valid_loader is None or self.test_loader is None:
             raise RuntimeError("Call .setup() before requesting dataloaders.")
         return self.train_loader, self.valid_loader, self.test_loader
@@ -87,6 +119,7 @@ class EEGCCDDataModule:
     # ---- Internal helpers -----------------------------------------------
 
     def _load_raw_dataset(self) -> None:
+        """Load the raw CCD dataset from the EEGChallengeDataset helper (no preprocessing)."""
         self.dataset_ccd = EEGChallengeDataset(
             task="contrastChangeDetection",
             release=self.release,
@@ -95,11 +128,19 @@ class EEGCCDDataModule:
         )
 
     def _create_windows(self) -> None:
+        """
+        Apply EEGDash preprocessing pipeline to annotate trials, add auxiliary anchors,
+        and create sliding windows aligned to the CCD stimulus anchor with configured temporal parameters.
+
+        The resulting `single_windows` dataset contains windowed EEG segments with associated reaction time labels
+        and metadata columns required for the regression baseline.
+        """
         assert self.dataset_ccd is not None
 
         epoch_len_s = self.epoch_len_s
         sfreq = self.sfreq
 
+        # Prepare target reaction times and auxiliary anchors
         transformations = [
             Preprocessor(
                 annotate_trials_with_target,
@@ -119,6 +160,7 @@ class EEGCCDDataModule:
 
         dataset = keep_only_recordings_with(anchor, self.dataset_ccd)
 
+        # Extract windows relative to stimulus anchor with shift and length in seconds
         single_windows = create_windows_from_events(
             dataset,
             mapping={anchor: 0},
@@ -147,6 +189,13 @@ class EEGCCDDataModule:
         self.single_windows = single_windows
 
     def _split_by_subject(self) -> None:
+        """
+        Split the windowed dataset into train/validation/test sets on the subject level
+        to avoid subject leakage between splits.
+
+        This subject-wise splitting mirrors the official starter kit logic and is critical for ensuring
+        a fair subject-independent evaluation of model performance.
+        """
         assert self.single_windows is not None
 
         meta_information = self.single_windows.get_metadata()
@@ -157,6 +206,7 @@ class EEGCCDDataModule:
 
         subjects = meta_information["subject"].unique()
 
+        # Split by unique subject IDs to ensure no subject leakage between sets
         train_subj, valid_test_subject = train_test_split(
             subjects,
             test_size=(valid_frac + test_frac),
@@ -175,6 +225,7 @@ class EEGCCDDataModule:
         valid_set_list = []
         test_set_list = []
 
+        # Reassemble subject-specific datasets into concatenated train, valid, and test sets
         for subj_id, ds in subject_split.items():
             if subj_id in train_subj:
                 train_set_list.append(ds)
@@ -188,6 +239,7 @@ class EEGCCDDataModule:
         self.test_set = BaseConcatDataset(test_set_list)
 
     def _create_dataloaders(self) -> None:
+        """Build PyTorch dataloaders for train/validation/test with configured batch size and num_workers."""
         assert self.train_set is not None
         assert self.valid_set is not None
         assert self.test_set is not None
