@@ -19,7 +19,7 @@ def main() -> None:
         cache_root=Path.home() / "eegdash_cache" / "eeg_challenge_cache",
         mini=True,
         batch_size=128,
-        num_workers=0,
+        num_workers=4,
     )
     data_module.setup()
     train_loader, valid_loader, test_loader = data_module.get_dataloaders()
@@ -48,7 +48,7 @@ def main() -> None:
     test_loss, test_rmse = trainer.evaluate(test_loader)
     print(f"Final test RMSE: {test_rmse:.6f}, test loss: {test_loss:.6f}")
 
-    trainer.save_best_weights("weights_challenge_1.pt")
+    trainer.save_best_weights("outputs/weights_challenge_1.pt")
     print("Model saved as 'weights_challenge_1.pt'")
 
 
