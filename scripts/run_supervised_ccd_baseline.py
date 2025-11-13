@@ -1,10 +1,16 @@
 from pathlib import Path
+import sys
+
+# Make project root importable when running this file directly
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.data_module import EEGCCDDataModule
+from src.trainer import SupervisedRegressorTrainer, TrainingConfig
 
 import torch
 from braindecode.models import EEGNeX
-
-from data_module import EEGCCDDataModule
-from trainer import SupervisedRegressorTrainer, TrainingConfig
 
 
 def main() -> None:
