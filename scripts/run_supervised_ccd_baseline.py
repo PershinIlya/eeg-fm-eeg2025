@@ -48,8 +48,9 @@ def main() -> None:
     test_loss, test_rmse = trainer.evaluate(test_loader)
     print(f"Final test RMSE: {test_rmse:.6f}, test loss: {test_loss:.6f}")
 
-    trainer.save_best_weights("outputs/weights_challenge_1.pt")
-    print("Model saved as 'weights_challenge_1.pt'")
+    weights_fname = "outputs/weights_ccd_supervised_baseline.pt"
+    trainer.save_best_weights("outputs/weights_ccd_supervised_baseline.pt")
+    print(f"Model saved as {weights_fname}")
 
 
 if __name__ == "__main__":
